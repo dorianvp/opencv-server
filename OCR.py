@@ -18,6 +18,14 @@ import numpy as np
 mp_drawing = mp.solutions.drawing_utils
 mp_hands = mp.solutions.hands
 
+hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+hand_landmark_drawing_spec = mp_drawing.DrawingSpec(
+    thickness=1, circle_radius=5, color=(200, 0, 0)
+)
+hand_connection_drawing_spec = mp_drawing.DrawingSpec(
+    thickness=3, circle_radius=10, color=(100, 255, 100)
+)
+
 def tesseract_location(root):
     """
     Sets the tesseract cmd root and exits is the root is not set correctly
@@ -223,14 +231,14 @@ class OCR:
         """
         while not self.stopped:
             if self.exchange is not None:  # Defends against an undefined VideoStream reference
-                frame = self.exchange.frame
+                frame = self.exchange
 
                 # # # CUSTOM FRAME PRE-PROCESSING GOES HERE # # #
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
                 # frame = cv2.adaptiveThreshold(frame, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
                 # # # # # # # # # # # # # # # # # # # #
-                frame = frame[self.crop_height:(self.height - self.crop_height),
-                              self.crop_width:(self.width - self.crop_width)]
+                # frame = frame[self.crop_height:(self.height - self.crop_height),
+                #               self.crop_width:(self.width - self.crop_width)]
 
                 self.boxes = pytesseract.image_to_data(frame, lang=self.language, output_type=pytesseract.Output.DICT)
     def set_dimensions(self, width, height, crop_width, crop_height):
@@ -318,7 +326,8 @@ def views(mode: int, confidence: int):
     return conf_thresh, color
 
 
-def put_ocr_boxes(boxes, frame, height, crop_width=0, crop_height=0, view_mode=1):
+def put_ocr_boxes(boxes, frame, crop_width=0, crop_height=0, view_mode=1):
+    n_boxes = 0
     """
     Draws text bounding boxes at tesseract-specified text location. Also displays compatible (ascii) detected text
     Note: ONLY works with the output from tesseract image_to_data(); image_to_boxes() uses a different output format
@@ -335,8 +344,8 @@ def put_ocr_boxes(boxes, frame, height, crop_width=0, crop_height=0, view_mode=1
 
     if view_mode not in [1, 2, 3, 4]:
         raise Exception("A nonexistent view mode was selected. Only modes 1-4 are available")
-
-    n_boxes = len(boxes['text'])
+    if boxes is not None:
+        n_boxes = len(boxes['text'])
     for i in range(n_boxes):
         if int(boxes['conf'][i]) > 0:  # Filter out weak confidences
             (x, y, w, h) = (boxes['left'][i], boxes['top'][i], boxes['width'][i], boxes['height'][i])
@@ -366,7 +375,7 @@ def put_ocr_boxes(boxes, frame, height, crop_width=0, crop_height=0, view_mode=1
                         text = text + ' ' + word
 
         if text.isascii():  # CV2 is only able to display ascii chars at the moment
-            cv2.putText(frame, text, (5, height - 5), cv2.FONT_HERSHEY_DUPLEX, 1, (200, 200, 200))
+            cv2.putText(frame, text, (5, 100), cv2.FONT_HERSHEY_DUPLEX, 1, (200, 200, 200))
 
     return frame, text
 
@@ -420,6 +429,7 @@ def put_language(frame: numpy.ndarray, language_string: str) -> numpy.ndarray:
 
 
 def ocr_stream(crop: list[int, int], source: int = 0, view_mode: int = 1, language=None):
+    n_boxes = 0
     hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
     hand_landmark_drawing_spec = mp_drawing.DrawingSpec(
         thickness=1, circle_radius=5, color=(200, 0, 0)
@@ -528,10 +538,11 @@ def ocr_stream(crop: list[int, int], source: int = 0, view_mode: int = 1, langua
         # frame = put_crop_box(frame, img_wi, img_hi, cropx, cropy)
         # Prints the OCR boxes
         na = []
-        if index_coordinates:
+        if index_coordinates or True:
             # Print only the text under the new_point coordinates
-            frame = put_ocr_boxes(ocr.boxes, frame, img_hi, cropx, cropy, view_mode)
-            n_boxes = len(ocr.boxes['text'])
+            frame = put_ocr_boxes(ocr.boxes, frame, cropx, cropy, view_mode)
+            if ocr.boxes is not None:
+                n_boxes = len(ocr.boxes['text'])
             for i in range(n_boxes):
                 if int(ocr.boxes['conf'][i]) > 0:  # Filter out weak confidences
                     (x, y, w, h) = (ocr.boxes['left'][i], ocr.boxes['top'][i], ocr.boxes['width'][i], ocr.boxes['height'][i])
@@ -560,3 +571,67 @@ def ocr_stream(crop: list[int, int], source: int = 0, view_mode: int = 1, langua
 
         cv2.imshow("realtime OCR", frame)
         cps1.increment()  # Incrementation for rate counter
+
+def ocr_from_frame(frame, ocr):
+    
+    index_coordinates = None
+    new_point = (0, 0)
+    
+    crop = None
+    if crop is None:  # Setting crop area and confirming valid parameters
+        cropx, cropy = (0, 0)  # Default crop if none is specified
+
+    pts = deque(maxlen=16)
+
+    results_hand = hands.process(frame)
+    if results_hand.multi_hand_landmarks:
+        for hand_landmarks in results_hand.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(
+                image=frame,
+                landmark_list=hand_landmarks,
+                connections=mp_hands.HAND_CONNECTIONS,
+                connection_drawing_spec=hand_connection_drawing_spec,
+            )
+            index_coordinates = OCR.get_index_coordinate(frame, results_hand)
+            index_dip_coordinates = OCR.get_index_dip_coordinates(frame, results_hand)
+    if index_coordinates:
+        pts.appendleft(index_coordinates)  # Index Finger
+        new_point = (
+            int(
+                index_coordinates[0]
+                + (index_coordinates[0] - index_dip_coordinates[0]) / 2
+            ),
+            int(
+                index_coordinates[1]
+                + (index_coordinates[1] - index_dip_coordinates[1]) / 2
+            ),
+        )
+        frame = cv2.circle(
+            frame, new_point, radius=5, color=(0, 0, 255), thickness=1
+        )
+
+    na = []
+    if index_coordinates or True:
+        if ocr.boxes is not None:
+            frame = put_ocr_boxes(ocr.boxes, frame, cropx, cropy)
+            n_boxes = len(ocr.boxes['text'])
+            for i in range(n_boxes):
+                if int(ocr.boxes['conf'][i]) > 0:  # Filter out weak confidences
+                    # print(new_point)
+                    (x, y, w, h) = (ocr.boxes['left'][i], ocr.boxes['top'][i], ocr.boxes['width'][i], ocr.boxes['height'][i])
+                    # print(ocr.boxes['text'][i], x, y, x + w, y + h)
+                    if new_point[0] > x and new_point[0] < x + w and new_point[1] > y and new_point[1] < y + h:
+                        print(ocr.boxes['text'][i])
+        # Prints the text under the index finger coordinates
+        # for box in ocr.boxes:
+        #     box = box.split(' ')
+        #     char = box[0]
+            # print(char)
+            # x1, y1, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
+            # print(char, x1, y1, x2, y2)
+        # for b in na:
+        #     char = b[0]
+            # print(b)
+            # x1, y1, x2, y2 = int(b[1]), int(b[2]), int(b[3]), int(b[4])
+            # print(char, x1, y1, x2, y2)
+    return frame
