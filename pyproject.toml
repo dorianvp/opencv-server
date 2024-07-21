@@ -10,6 +10,8 @@ python = "^3.10"
 numpy = "^2.0.0"
 opencv-python = "^4.10.0.84"
 pickle4 = "^0.0.1"
+mediapipe = "^0.10.14"
+pytesseract = "^0.3.10"
 
 
 [build-system]
