@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "client"
+version = "0.1.0"
+description = ""
+authors = ["dariovp <dariovp01@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pickle4 = "^0.0.1"
+mediapipe = "^0.10.14"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
